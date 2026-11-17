@@ -1,0 +1,35 @@
+apps/server/src/project/AgentSessionImporter.test.ts
+  s_21889ac26eec80::t_088bc20e8b58c4 287-292,456-462
+  s_21889ac26eec80::t_298578bd87c03e 463-465
+  s_76fed729b4c216::t_58804e6421d56e 222,466-475
+docs/user/welcome-page.md
+  s_21889ac26eec80::t_4c89aa14bce864 113-118
+apps/server/src/orchestration-v2/runtimeLayer.ts
+  s_76fed729b4c216::t_4363b7fff69b4b 239
+apps/server/src/project/AgentSessionImporter.ts
+  s_76fed729b4c216::t_d684de11d799be 196,268-273,665,672,676,681,693,697,699
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "25edf72f05e5923e5065b0466058bb292888d816",
+  "prompts": {},
+  "sessions": {
+    "s_21889ac26eec80": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1e3ec-e9ce-7a93-9c11-07dfc02414ac",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Yani Hu <56077583+Little-Bacon@users.noreply.github.com>"
+    },
+    "s_76fed729b4c216": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1e7a7-5643-7fd0-b0b4-a81a47868cd1",
+        "model": "unknown"
+      },
+      "human_author": "Yani Hu <56077583+Little-Bacon@users.noreply.github.com>"
+    }
+  }
+}
