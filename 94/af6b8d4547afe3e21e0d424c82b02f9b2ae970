@@ -1,0 +1,53 @@
+apps/server/src/orchestration-v2/EventSink.ts
+  s_21889ac26eec80::t_407689fa6f3c36 8,105,120,461
+apps/server/src/project/ClaudeDesktopSessionBridge.ts
+  s_21889ac26eec80::t_5c413be7893129 1-16,28-55,61-74,76,78-86,94-97,104-107,111-113,118
+  s_21889ac26eec80::t_f234fe234af6ad 77
+  s_21889ac26eec80::t_8b81e428dab17d 17-27,56-60,75,87-93,98-103,108-110,114-117,119-121
+docs/user/welcome-page.md
+  s_21889ac26eec80::t_a2ae2d03dcb4b4 109,115-124
+  s_21889ac26eec80::t_f69b0a7e726699 125
+apps/server/src/project/AgentSessionImporter.test.ts
+  s_21889ac26eec80::t_965230bab7ee0d 483-499,502-505,513,518-536,540,547,549-572,580-582,584-585,614
+  s_21889ac26eec80::t_eb402d6997c110 500-501,506-511,514-517
+  s_21889ac26eec80::t_8b81e428dab17d 15-16,22,46,228-230,239-243,451-480
+  s_21889ac26eec80::t_d52da97acb8a56 28,548,583
+  s_21889ac26eec80::t_58fc535a80cae5 545-546,574-579
+  s_21889ac26eec80::t_20b94d8461cce5 44
+  s_21889ac26eec80::t_32c09b693dd194 481-482
+  s_21889ac26eec80::t_c1277754b9a47e 586-612
+  s_21889ac26eec80::t_a2ae2d03dcb4b4 537-539,541-543
+  s_21889ac26eec80::t_273d4a961f8a15 512
+  s_21889ac26eec80::t_52e08a3e281247 544
+  s_21889ac26eec80::t_f7c74b93009497 573
+  s_21889ac26eec80::t_705008b35a7a5c 613
+  s_21889ac26eec80::t_ab95c7051bdf38 615
+apps/server/src/orchestration-v2/runtimeLayer.ts
+  s_21889ac26eec80::t_20b94d8461cce5 16,243
+apps/server/src/project/AgentSessionScanner.test.ts
+  s_21889ac26eec80::t_ff22789f204674 2108-2144
+apps/server/src/project/AgentSessionImporter.ts
+  s_21889ac26eec80::t_3b7401d14ea02b 341-346,484-485
+  s_21889ac26eec80::t_20b94d8461cce5 52,473-483,691,693
+  s_21889ac26eec80::t_f234fe234af6ad 286-293
+  s_21889ac26eec80::t_407689fa6f3c36 15,37-38,192,269,294-306,324-326,354-357,445,455-472,486-502,581
+apps/server/src/project/AgentSessionScanner.ts
+  s_21889ac26eec80::t_b77185c1149bbd 222-224,1951-1958,1963-1983
+  s_21889ac26eec80::t_20b94d8461cce5 1959-1962
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "94af6b8d4547afe3e21e0d424c82b02f9b2ae970",
+  "prompts": {},
+  "sessions": {
+    "s_21889ac26eec80": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1e3ec-e9ce-7a93-9c11-07dfc02414ac",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Yani Hu <56077583+Little-Bacon@users.noreply.github.com>"
+    }
+  }
+}
