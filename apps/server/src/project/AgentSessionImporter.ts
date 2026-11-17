@@ -193,7 +193,7 @@ const make = Effect.gen(function* () {
   const ceiling = settingsService.managedPolicy?.limits?.maxRuntimeMode;
   const importRecentAgentThreads = Effect.fn("importRecentAgentThreadsV2")(function* (
     input: AgentSessionImportInput & {
-      readonly claudeHistorySyncOnly?: boolean;
+      readonly nativeHistorySyncOnly?: boolean;
       readonly forceClaudeHistoryRefresh?: boolean;
     },
   ) {
@@ -265,7 +265,12 @@ const make = Effect.gen(function* () {
           return;
         }
         const source = outcome.source;
-        if (input.claudeHistorySyncOnly && source.provider !== "claudeAgent") return;
+        if (
+          input.nativeHistorySyncOnly &&
+          source.provider !== "claudeAgent" &&
+          source.provider !== "codex"
+        )
+          return;
         let threadId = ThreadId.make(
           `import:${source.providerInstanceId}:${source.providerSessionId}`,
         );
@@ -657,23 +662,23 @@ const make = Effect.gen(function* () {
 
   let firstSweep = true;
   let sweepCount = 0;
-  const syncClaudeHistory = Effect.fn("AgentSessionImporter.syncClaudeHistory")(function* () {
+  const syncNativeHistory = Effect.fn("AgentSessionImporter.syncNativeHistory")(function* () {
     if (sweepCount++ % 4 === 0) yield* scanner.scan;
     const forceClaudeHistoryRefresh = firstSweep;
     firstSweep = false;
     for (const project of yield* projects.listShells()) {
       yield* importRecentAgentThreads({
         projectId: project.id,
-        claudeHistorySyncOnly: true,
+        nativeHistorySyncOnly: true,
         forceClaudeHistoryRefresh,
       }).pipe(
         Effect.catch((cause) =>
-          Effect.logWarning("Claude history sync deferred", { projectId: project.id, cause }),
+          Effect.logWarning("Native agent history sync deferred", { projectId: project.id, cause }),
         ),
       );
     }
   });
-  return { importRecentAgentThreads, syncClaudeHistory };
+  return { importRecentAgentThreads, syncNativeHistory };
 });
 
 type AgentSessionImporterShape = Effect.Success<typeof make>;
@@ -685,13 +690,13 @@ export class AgentSessionImporter extends Context.Service<
 
 export const layer = Layer.effect(AgentSessionImporter, make);
 
-export const layerWithClaudeHistorySync = Layer.effectDiscard(
+export const layerWithNativeHistorySync = Layer.effectDiscard(
   Effect.gen(function* () {
     const importer = yield* AgentSessionImporter;
     const desktop = yield* ClaudeDesktopSessionBridge.ClaudeDesktopSessionBridge;
-    yield* importer.syncClaudeHistory().pipe(
+    yield* importer.syncNativeHistory().pipe(
       Effect.andThen(desktop.sync),
-      Effect.catch((cause) => Effect.logWarning("Claude history sync failed", { cause })),
+      Effect.catch((cause) => Effect.logWarning("Native agent history sync failed", { cause })),
       Effect.repeat(Schedule.spaced("20 seconds")),
       Effect.delay("5 seconds"),
       Effect.forkScoped,

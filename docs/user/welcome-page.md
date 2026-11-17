@@ -110,7 +110,12 @@ Claude Code conversations pick up new messages from the native client
 about every 20 seconds while T3 Code is running. Finish the current turn before
 continuing the conversation in another client. An active T3 turn delays the
 refresh until it finishes; the next Claude turn loads the updated native context.
-Tool activity and attachments are still omitted. Other providers are imported once.
+Tool activity and attachments are still omitted.
+
+Projects already added to T3 also pick up newly created Codex conversations on
+the next background scan, usually within a minute or two. Each conversation stays
+with its original project; use the project filter to switch between workspaces.
+Existing imported Codex messages remain snapshots. Other providers are imported once.
 
 On macOS, you can also add conversations started in T3 to Claude Desktop's Code
 list automatically. Set `T3CODE_CLAUDE_DESKTOP_SESSIONS_DIR` in the T3 server's

@@ -219,7 +219,7 @@ const makeImporter = Effect.fn(function* (
   );
   const context = yield* Layer.build(
     (backgroundSync
-      ? AgentSessionImporter.layerWithClaudeHistorySync
+      ? AgentSessionImporter.layerWithNativeHistorySync
       : AgentSessionImporter.layer
     ).pipe(
       Layer.provide(
@@ -284,7 +284,12 @@ const makeImporter = Effect.fn(function* (
     ),
   );
   const importer = Context.get(context, AgentSessionImporter.AgentSessionImporter);
-  return { run: importer.importRecentAgentThreads({ projectId }), published, firstCommit };
+  return {
+    run: importer.importRecentAgentThreads({ projectId }),
+    sync: importer.syncNativeHistory(),
+    published,
+    firstCommit,
+  };
 });
 
 it.effect(
@@ -445,6 +450,26 @@ it.effect("starts Claude history synchronization in the production layer", () =>
         (message) => message.text,
       ),
     ).toEqual(["Fix it", "Fixed"]);
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
+it.effect("discovers new Codex conversations during the background project sweep", () =>
+  Effect.gen(function* () {
+    const source = candidate(CODEX_MODEL_SELECTION, "new-desktop-conversation");
+    const importer = yield* makeImporter([source]);
+    yield* importer.sync;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const imported = yield* projections.getThreadRecords(importId(source), [
+      "messages",
+      "providerThreads",
+    ]);
+    expect(imported.messages.map((message) => message.text)).toEqual(["Fix it", "Fixed"]);
+    expect(imported.providerThreads[0]?.nativeThreadRef?.nativeId).toBe(
+      source.source.providerSessionId,
+    );
+    const count = importer.published.length;
+    yield* importer.sync;
+    expect(importer.published).toHaveLength(count);
   }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 

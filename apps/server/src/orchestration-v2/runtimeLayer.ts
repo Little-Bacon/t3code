@@ -236,7 +236,7 @@ const layerOrchestratorProvided = Orchestrator.layer.pipe(
   ),
 );
 
-const layerAgentSessionImporterProvided = AgentSessionImporter.layerWithClaudeHistorySync.pipe(
+const layerAgentSessionImporterProvided = AgentSessionImporter.layerWithNativeHistorySync.pipe(
   Layer.provide(
     Layer.mergeAll(
       AgentSessionScanner.layer,
