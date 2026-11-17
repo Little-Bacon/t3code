@@ -1,0 +1,54 @@
+apps/server/src/project/AgentSessionImporter.ts
+  s_21889ac26eec80::t_4e1f4ac7ae56a1 605
+  s_21889ac26eec80::t_f820bbf41425c6 246-247,251,610
+  s_21889ac26eec80::t_7e0a995f503e7b 35-37,42-43,48,101-102,105-106,186,190-193,248-250,263,323-421,572-590,601-604,606-609,611-612
+apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts
+  s_21889ac26eec80::t_cbd1385fdedda5 8351-8354,8356-8366,8369-8374,8376-8388,8391-8394,8397-8405,8409-8411
+  s_21889ac26eec80::t_75a4d6a273761b 8355
+  s_21889ac26eec80::t_ff6c40a049392e 8367-8368
+  s_21889ac26eec80::t_2c6409ad8fe218 8375
+  s_21889ac26eec80::t_c37f5ee7084659 8389-8390
+  s_21889ac26eec80::t_74e8f57ba2a1f8 8395-8396
+  s_21889ac26eec80::t_7e4ebaf688d921 8406-8408
+apps/server/src/orchestration-v2/runtimeLayer.ts
+  s_21889ac26eec80::t_f820bbf41425c6 238,247
+apps/server/src/project/AgentSessionScanner.test.ts
+  s_21889ac26eec80::t_fa581311d5caf6 2447,2482-2483
+apps/server/src/project/AgentSessionImporter.test.ts
+  s_21889ac26eec80::t_4e1f4ac7ae56a1 23,181,183,231,273,416-419,425-428,434
+  s_21889ac26eec80::t_f820bbf41425c6 29,223
+  s_21889ac26eec80::t_925e6311b62bbd 208,215-218,234-245,420-424,429-433
+  s_21889ac26eec80::t_ff61745ae21591 373-394,396-399,401-402,404-405,408-412,414-415,435-436
+  s_21889ac26eec80::t_ce4456cbd6c44d 395,400,403,406-407,413
+docs/user/welcome-page.md
+  s_21889ac26eec80::t_28d74b1afdb4ca 93-94,107-113
+apps/server/src/project/claudeHistorySync.ts
+  s_21889ac26eec80::t_6f8d2be8db2187 1,3,6-21,23-31,33-37,39,41-45,47-50,53-54,56-62,64-68,70-71,74-76
+  s_21889ac26eec80::t_4e1f4ac7ae56a1 2,4-5,22
+  s_21889ac26eec80::t_6b2c48b93b5fdb 32,38,40,46,51-52,55,63,69,72-73
+apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts
+  s_21889ac26eec80::t_fa581311d5caf6 11039-11041
+  s_21889ac26eec80::t_355d548e6363e9 4455,10930,10944,10974,11038,11125
+apps/server/src/project/claudeHistorySync.test.ts
+  s_21889ac26eec80::t_4e1f4ac7ae56a1 2,14,16
+  s_21889ac26eec80::t_6f8d2be8db2187 1,3-9,11-13,17-30,32-47,52-65,70-77,79-81
+  s_21889ac26eec80::t_b369682933ef31 10,15,31,48-51,66-69,78
+apps/server/src/project/AgentSessionScanner.ts
+  s_21889ac26eec80::t_d179cf77c5a0be 84,443-444,531,645
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "2df017d6fac38546edba7c932684883a7d955de0",
+  "prompts": {},
+  "sessions": {
+    "s_21889ac26eec80": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1e3ec-e9ce-7a93-9c11-07dfc02414ac",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Yani Hu <56077583+Little-Bacon@users.noreply.github.com>"
+    }
+  }
+}
