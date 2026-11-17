@@ -117,6 +117,12 @@ the next background scan, usually within a minute or two. Each conversation stay
 with its original project; use the project filter to switch between workspaces.
 Existing imported Codex messages remain snapshots. Other providers are imported once.
 
+If another Codex client holds a conversation's writer lock, continuing it in T3
+creates a native Codex fork with the existing context. T3 keeps using that fork
+on later messages and reconnects. The original remains untouched; messages after
+the fork do not merge between branches. Opening the fork in the Codex app lets
+you continue there, but T3 forks again if that branch is still held by the app.
+
 On macOS, you can also add conversations started in T3 to Claude Desktop's Code
 list automatically. Set `T3CODE_CLAUDE_DESKTOP_SESSIONS_DIR` in the T3 server's
 environment to your active desktop profile's `claude-code-sessions/<account>/<org>`

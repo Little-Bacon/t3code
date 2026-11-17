@@ -7338,19 +7338,24 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             function* (threadInput) {
               const nativeThreadId = yield* getNativeThreadId(threadInput.providerThread);
               const appThreadId = threadInput.threadId ?? threadInput.providerThread.appThreadId;
+              const runtimeParams = codexThreadRuntimeParams({
+                threadId: appThreadId,
+                mcpSession: yield* readMcpSession(appThreadId),
+                ...(threadInput.modelSelection === undefined
+                  ? {}
+                  : { modelSelection: threadInput.modelSelection }),
+                ...(threadInput.runtimePolicy === undefined
+                  ? {}
+                  : { runtimePolicy: threadInput.runtimePolicy }),
+              });
               const resume = resumeNativeThread(nativeThreadId, {
                 excludeTurns: true,
-                ...codexThreadRuntimeParams({
-                  threadId: appThreadId,
-                  mcpSession: yield* readMcpSession(appThreadId),
-                  ...(threadInput.modelSelection === undefined
-                    ? {}
-                    : { modelSelection: threadInput.modelSelection }),
-                  ...(threadInput.runtimePolicy === undefined
-                    ? {}
-                    : { runtimePolicy: threadInput.runtimePolicy }),
-                }),
-              });
+                ...runtimeParams,
+              }).pipe(
+                Effect.catchIf(isCodexActiveWriterError, () =>
+                  client.raw.request("thread/fork", { threadId: nativeThreadId, ...runtimeParams }),
+                ),
+              );
               const response = yield* ensureInitialized.pipe(
                 Effect.andThen(resume),
                 Effect.flatMap(decodeCodexResumeMetadata),
@@ -7365,7 +7370,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   nativeId: response.thread.id,
                   strength: "strong",
                 },
-                nativeConversationHeadRef: threadInput.providerThread.nativeConversationHeadRef,
+                nativeConversationHeadRef:
+                  response.thread.id === nativeThreadId
+                    ? threadInput.providerThread.nativeConversationHeadRef
+                    : null,
                 updatedAt: codexTimestamp(response.thread.updatedAt),
               } satisfies OrchestrationV2ProviderThread;
             },

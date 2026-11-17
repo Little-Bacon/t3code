@@ -3597,76 +3597,143 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect("reports a thread another Codex client is writing to as in use", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const nativeThreadId = "thread-open-elsewhere";
-        const harness = yield* makeCodexReplayHarness(
-          makeCodexReplayTranscript({
-            scenario: "codex-resume-active-writer",
-            entries: [
-              ...codexReplayPreamble({
-                nativeThreadId,
-                nativeTurnId: "unused-turn",
-                prompt: "unused-prompt",
-              }).slice(0, 5),
-              {
-                type: "expect_outbound",
-                label: "thread/resume",
-                frame: {
-                  id: 3,
-                  method: "thread/resume",
-                  params: {
-                    threadId: nativeThreadId,
-                    excludeTurns: true,
-                    cwd: CODEX_TEST_RUNTIME_POLICY.cwd,
-                    model: CODEX_TEST_MODEL_SELECTION.model,
-                    config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+  it.effect.each(["writer-conflict", "normal-resume", "unrelated-error", "fork-error"] as const)(
+    "resumes Codex safely: %s",
+    (scenario) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const nativeThreadId = "thread-open-elsewhere";
+          const forkId = "thread-t3-continuation";
+          const conflict = scenario === "writer-conflict" || scenario === "fork-error";
+          const params = {
+            cwd: CODEX_TEST_RUNTIME_POLICY.cwd,
+            model: CODEX_TEST_MODEL_SELECTION.model,
+            config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+          };
+          const harness = yield* makeCodexReplayHarness(
+            makeCodexReplayTranscript({
+              scenario: `codex-safe-resume-${scenario}`,
+              entries: [
+                ...codexReplayPreamble({
+                  nativeThreadId,
+                  nativeTurnId: "unused-turn",
+                  prompt: "unused",
+                }).slice(0, 5),
+                {
+                  type: "expect_outbound",
+                  label: "resume",
+                  frame: {
+                    id: 3,
+                    method: "thread/resume",
+                    params: { threadId: nativeThreadId, excludeTurns: true, ...params },
                   },
                 },
-              },
-              {
-                type: "emit_inbound",
-                label: "active writer",
-                frame: {
-                  id: 3,
-                  error: {
-                    code: -32600,
-                    message: `thread ${nativeThreadId} already has an active writer`,
-                  },
+                {
+                  type: "emit_inbound",
+                  label: "resume",
+                  frame:
+                    scenario === "normal-resume"
+                      ? { id: 3, result: { thread: { id: nativeThreadId, updatedAt: 1782622450 } } }
+                      : {
+                          id: 3,
+                          error: {
+                            code: -32600,
+                            message: conflict
+                              ? `thread ${nativeThreadId} already has an active writer`
+                              : "permission denied",
+                          },
+                        },
                 },
-              },
-            ],
-          }),
-        );
-
-        const error = yield* Effect.flip(
-          harness.runtime.resumeThread({
-            providerThread: harness.providerThread,
-            modelSelection: CODEX_TEST_MODEL_SELECTION,
-            runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
-          }),
-        );
-
-        assert.equal(error._tag, "ProviderAdapterThreadInUseError");
-        assert.nestedPropertyVal(error, "providerThreadId", harness.providerThread.id);
-        assert.include(error.message, "open in another Codex client");
-        assert.nestedPropertyVal(
-          error,
-          "cause.errorMessage",
-          `thread ${nativeThreadId} already has an active writer`,
-        );
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            McpProviderSessions.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
+                ...(conflict
+                  ? [
+                      {
+                        type: "expect_outbound" as const,
+                        label: "fork only the occupied thread",
+                        frame: {
+                          id: 4,
+                          method: "thread/fork",
+                          params: { threadId: nativeThreadId, ...params },
+                        },
+                      },
+                      {
+                        type: "emit_inbound" as const,
+                        label: "fork",
+                        frame:
+                          scenario === "fork-error"
+                            ? { id: 4, error: { code: -32603, message: "fork unavailable" } }
+                            : { id: 4, result: { thread: { id: forkId, updatedAt: 1782622451 } } },
+                      },
+                    ]
+                  : []),
+                ...(scenario === "writer-conflict"
+                  ? [
+                      {
+                        type: "expect_outbound" as const,
+                        label: "resume the saved fork without forking again",
+                        frame: {
+                          id: 5,
+                          method: "thread/resume",
+                          params: { threadId: forkId, excludeTurns: true, ...params },
+                        },
+                      },
+                      {
+                        type: "emit_inbound" as const,
+                        label: "resume fork",
+                        frame: { id: 5, result: { thread: { id: forkId, updatedAt: 1782622451 } } },
+                      },
+                    ]
+                  : []),
+              ],
+            }),
+          );
+          const originalProviderThread: OrchestrationV2ProviderThread = {
+            ...harness.providerThread,
+            nativeConversationHeadRef: {
+              driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+              nativeId: "original-head",
+              strength: "strong",
+            },
+          };
+          const resume = (providerThread = originalProviderThread) =>
+            harness.runtime.resumeThread({
+              providerThread,
+              modelSelection: CODEX_TEST_MODEL_SELECTION,
+              runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+            });
+          if (scenario === "unrelated-error" || scenario === "fork-error") {
+            const error = yield* Effect.flip(resume());
+            assert.equal(error._tag, "ProviderAdapterResumeThreadError");
+            assert.nestedPropertyVal(
+              error,
+              "cause.errorMessage",
+              scenario === "fork-error" ? "fork unavailable" : "permission denied",
+            );
+          } else {
+            const resumed = yield* resume();
+            assert.equal(resumed.id, harness.providerThread.id);
+            assert.equal(resumed.nativeThreadRef?.nativeId, conflict ? forkId : nativeThreadId);
+            if (conflict) {
+              assert.isNull(resumed.nativeConversationHeadRef);
+              const again = yield* resume(resumed);
+              assert.equal(again.nativeThreadRef?.nativeId, forkId);
+            } else {
+              assert.deepEqual(
+                resumed.nativeConversationHeadRef,
+                originalProviderThread.nativeConversationHeadRef,
+              );
+            }
+          }
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
           ),
         ),
       ),
-    ),
   );
 
   it.effect("resolves retryable app-server errors on resumed provider activity", () =>
