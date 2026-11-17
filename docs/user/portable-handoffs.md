@@ -3,6 +3,10 @@
 T3 Code transfers conversation context when you switch providers, continue through a portable
 restart, or use a fork that the provider cannot resume itself.
 
+Continuing an imported Claude conversation resumes its native history and sends your new message
+without prepending an imported transcript. Switching providers or recovering into a new native
+conversation still uses a portable handoff when needed.
+
 Short conversations transfer intact. For longer conversations, T3 Code favors recent requests and
 answers, the original request, and relevant activity such as command outcomes. Selected messages
 keep their full text, order, and user or assistant role, including partial work from failed or

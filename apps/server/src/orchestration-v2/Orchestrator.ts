@@ -1039,9 +1039,17 @@ export function shouldPrepareLegacyImportHandoff(input: {
   readonly hasCompletedRun: boolean;
   readonly historyOrigin: OrchestrationV2AppThread["historyOrigin"];
   readonly legacyImportItemCount: number;
+  readonly nativeThreadRef?: OrchestrationV2ProviderThread["nativeThreadRef"];
 }): boolean {
+  const resumesClaudeHistory =
+    input.nativeThreadRef?.driver === "claudeAgent" &&
+    input.nativeThreadRef.strength === "strong" &&
+    input.nativeThreadRef.nativeId !== null;
   return (
-    input.historyOrigin === "v1_import" && !input.hasCompletedRun && input.legacyImportItemCount > 0
+    input.historyOrigin === "v1_import" &&
+    !input.hasCompletedRun &&
+    input.legacyImportItemCount > 0 &&
+    !resumesClaudeHistory
   );
 }
 
@@ -6942,6 +6950,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         historyOrigin: projection.thread.historyOrigin,
         hasCompletedRun: latestCompletedRun !== undefined,
         legacyImportItemCount: legacyImportItems.length,
+        nativeThreadRef: reusableProviderThread?.nativeThreadRef ?? null,
       })
         ? yield* contextHandoffService
             .prepareLegacyImport({
