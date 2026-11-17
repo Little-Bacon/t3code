@@ -1,0 +1,25 @@
+docs/user/portable-handoffs.md
+  s_55dfa4717626a3::t_0394643fd6733d 6-9
+apps/server/src/orchestration-v2/Orchestrator.ts
+  s_55dfa4717626a3::t_490b8072992e9d 1042,1044-1047,1049-1052
+  s_55dfa4717626a3::t_dd7f013ca21189 6953
+apps/server/src/orchestration-v2/Orchestrator.migration.test.ts
+  s_55dfa4717626a3::t_587b1aa2d89d9c 2,36-58,60-71
+  s_55dfa4717626a3::t_6252d0e927a626 59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "bd54e501aa48c84f62644497f97cf07c37088157",
+  "prompts": {},
+  "sessions": {
+    "s_55dfa4717626a3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1e773-b095-75f0-bb1e-b296cd0bdc55",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Yani Hu <56077583+Little-Bacon@users.noreply.github.com>"
+    }
+  }
+}
