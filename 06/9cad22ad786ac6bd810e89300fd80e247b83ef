@@ -1,0 +1,24 @@
+apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.test.ts
+  s_21889ac26eec80::t_c121dfd3a3c839 3612,3689-3723
+  s_21889ac26eec80::t_d0e42235688720 3600-3611,3613-3628,3631-3645,3647-3688,3724-3733
+apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts
+  s_21889ac26eec80::t_45dbdb8a1d80ca 7341-7350,7353-7358,7373-7376
+docs/user/welcome-page.md
+  s_21889ac26eec80::t_56355dc8a1f7ec 120-125
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "069cad22ad786ac6bd810e89300fd80e247b83ef",
+  "prompts": {},
+  "sessions": {
+    "s_21889ac26eec80": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1e3ec-e9ce-7a93-9c11-07dfc02414ac",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Yani Hu <56077583+Little-Bacon@users.noreply.github.com>"
+    }
+  }
+}
