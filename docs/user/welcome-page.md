@@ -123,6 +123,11 @@ The transcript stays in place; titles, groups, archives and deletions remain
 independent. Leave the variable unset to disable desktop imports. Profiles that
 use a different Claude config directory are excluded.
 
+Desktop imports register the conversation; they do not live-refresh an already
+open Claude Desktop window. After continuing in T3, choose **View → Reload** in
+Claude Desktop to display the new messages. Reopening the resume link alone does
+not refresh those messages.
+
 You can start without importing. While an import runs, T3 Code stays on the
 Welcome page. If you quit, open the Welcome page again from **Settings → About**; the
 projects you started stay checked.
