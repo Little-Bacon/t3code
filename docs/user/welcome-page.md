@@ -90,7 +90,8 @@ are read from each enabled Pi provider's session directory, which follows
 Pi conversation imports its active branch, the one Pi reopens.
 
 Conversation import is best effort. T3 Code keeps the first user prompt and the
-newest remaining visible user and assistant messages, with 200 messages total.
+newest remaining visible user and assistant messages, with up to 10,000 messages
+for Claude Code and 200 for other providers.
 It omits tool activity and attachments. For Codex, it omits generated setup
 context only when a canonical user event and a valid shared turn ID identify the
 same user turn. Ambiguous legacy or response-only context stays in the imported
@@ -103,8 +104,13 @@ malformed records and skips unreadable or unparseable conversations.
 
 Each import attempt reads up to 100 conversation files and 4 GiB per project. To
 continue a large batch, open the Welcome page again and pick the project in
-**Review all**. Completed conversations are not imported again. You can continue
-without the remaining history.
+**Review all**. You can continue without the remaining history.
+
+Imported Claude Code conversations pick up new messages from the native client
+about every 20 seconds while T3 Code is running. Finish the current turn before
+continuing the conversation in another client. An active T3 turn delays the
+refresh until it finishes; the next Claude turn loads the updated native context.
+Tool activity and attachments are still omitted. Other providers are imported once.
 
 You can start without importing. While an import runs, T3 Code stays on the
 Welcome page. If you quit, open the Welcome page again from **Settings → About**; the

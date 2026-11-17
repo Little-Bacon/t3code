@@ -20,11 +20,13 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as EventStore from "../orchestration-v2/EventStore.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import {
   CLAUDE_MODEL_SELECTION,
@@ -176,7 +178,9 @@ const makeImporter = Effect.fn(function* (
     ServerSettings.ServerSettingsService,
     ServerSettingsError
   > = ServerSettings.layerTest(),
+  backgroundSync = false,
 ) {
+  const firstCommit = yield* Deferred.make<void>();
   const sql = yield* SqlClient.SqlClient;
   const events = yield* EventStore.EventStoreV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -201,17 +205,22 @@ const makeImporter = Effect.fn(function* (
                   published.push(...batch);
                 }),
               ),
+              Effect.andThen(Deferred.succeed(firstCommit, undefined).pipe(Effect.asVoid)),
             ),
         }),
       ),
     ),
   );
   const context = yield* Layer.build(
-    AgentSessionImporter.layer.pipe(
+    (backgroundSync
+      ? AgentSessionImporter.layerWithClaudeHistorySync
+      : AgentSessionImporter.layer
+    ).pipe(
       Layer.provide(
         Layer.mergeAll(
           sinkLayer,
           settings,
+          ThreadCommandExecutor.layer,
           Layer.succeed(IdAllocator.IdAllocatorV2, yield* IdAllocator.IdAllocatorV2),
           Layer.succeed(
             ProviderSessionRuntime.ProviderSessionRuntimeRepository,
@@ -219,8 +228,21 @@ const makeImporter = Effect.fn(function* (
           ),
           Layer.mock(AgentSessionScanner.AgentSessionScanner)({
             recentThreads: () => Stream.fromIterable(candidates),
+            scan: Effect.succeed({ candidates: [], scannedAt: timestamp }),
           }),
           Layer.mock(ProjectService.ProjectService)({
+            listShells: () =>
+              Effect.succeed([
+                {
+                  id: projectId,
+                  title: "Project",
+                  workspaceRoot: "/workspace/project",
+                  defaultModelSelection: null,
+                  scripts: [],
+                  createdAt: timestamp,
+                  updatedAt: timestamp,
+                },
+              ]),
             getById: () =>
               Effect.succeedSome({
                 id: projectId,
@@ -248,7 +270,7 @@ const makeImporter = Effect.fn(function* (
     ),
   );
   const importer = Context.get(context, AgentSessionImporter.AgentSessionImporter);
-  return { run: importer.importRecentAgentThreads({ projectId }), published };
+  return { run: importer.importRecentAgentThreads({ projectId }), published, firstCommit };
 });
 
 it.effect(
@@ -346,6 +368,70 @@ it.effect(
         });
       }
     }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
+it.effect(
+  "appends externally added Claude history and publishes it without changing existing messages",
+  () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const source = candidate(
+        CLAUDE_MODEL_SELECTION,
+        "020e7f00-dce6-406b-8ec6-ed90498945d6",
+        "claudeAgent",
+      );
+      const importer = yield* makeImporter([source]);
+      yield* importer.run;
+      const before = yield* projections.getThreadRecords(importId(source), ["messages"]);
+      source.thread.messages.push({
+        role: "assistant",
+        text: "New context from the native client",
+        createdAt: "2026-09-01T11:00:00.000Z",
+      });
+      source.source.size += 100;
+      yield* importer.run;
+      const after = yield* projections.getThreadRecords(importId(source), [
+        "messages",
+        "providerThreads",
+      ]);
+      expect(after.messages).toHaveLength(3);
+      expect(after.messages.slice(0, 2)).toEqual(before.messages);
+      expect(after.messages[2]?.text).toBe("New context from the native client");
+      expect(after.providerThreads[0]?.nativeMetadata?.updatedAt).toBe("2026-09-01T11:00:00.000Z");
+      expect(
+        importer.published.some(
+          (stored) =>
+            "event" in stored &&
+            stored.event.type === "message.updated" &&
+            stored.event.payload.text === "New context from the native client",
+        ),
+      ).toBe(true);
+      const eventCount = importer.published.length;
+      yield* importer.run;
+      expect(importer.published).toHaveLength(eventCount);
+      expect(
+        (yield* projections.getThreadRecords(importId(source), ["messages"])).messages,
+      ).toEqual(after.messages);
+    }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
+it.effect("starts Claude history synchronization in the production layer", () =>
+  Effect.gen(function* () {
+    const source = candidate(
+      CLAUDE_MODEL_SELECTION,
+      "020e7f00-dce6-406b-8ec6-ed90498945d6",
+      "claudeAgent",
+    );
+    const importer = yield* makeImporter([source], Effect.void, ServerSettings.layerTest(), true);
+    yield* TestClock.adjust("5 seconds");
+    yield* Deferred.await(importer.firstCommit);
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    expect(
+      (yield* projections.getThreadRecords(importId(source), ["messages"])).messages.map(
+        (message) => message.text,
+      ),
+    ).toEqual(["Fix it", "Fixed"]);
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 
 it.effect("rechecks ownership after the import reaches the commit transaction", () =>

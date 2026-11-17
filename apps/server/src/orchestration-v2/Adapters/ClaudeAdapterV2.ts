@@ -4452,6 +4452,7 @@ interface ActiveClaudeSubagent {
 }
 
 interface ClaudeLiveQueryContext {
+  readonly nativeHistoryUpdatedAt: string | null;
   readonly queryPolicy: ClaudeRuntimeQueryPolicy;
   readonly nativeThreadId: string;
   readonly settingsCwd: string | null;
@@ -10926,6 +10927,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           );
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);
+          const nativeHistoryUpdatedAt = turnInput.providerThread.nativeMetadata?.updatedAt ?? null;
           // Continuations drain existing output without prompting; retain the live process regardless of selection.
           if (
             existing !== null &&
@@ -10939,6 +10941,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
             existing.queryPolicyKey === queryPolicyKey &&
+            existing.nativeHistoryUpdatedAt === nativeHistoryUpdatedAt &&
             !existing.stopping &&
             existing.selection.queryIdentity !== compiledSelection.queryIdentity &&
             canApplyClaudeSelectionLive(existing.selection, compiledSelection) &&
@@ -10968,6 +10971,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
             existing.queryPolicyKey === queryPolicyKey &&
+            existing.nativeHistoryUpdatedAt === nativeHistoryUpdatedAt &&
             !existing.stopping &&
             existing.selection.queryIdentity === compiledSelection.queryIdentity
           ) {
@@ -11031,7 +11035,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const hasPersistedProviderTurn =
             turnInput.nativeThreadHasTurns ?? turnInput.providerTurnOrdinal > 1;
           const shouldResume =
-            resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
+            nativeHistoryUpdatedAt !== null ||
+            resumeSessionAt !== undefined ||
+            openedWithResume ||
+            hasPersistedProviderTurn;
           const toolSearchOverride = yield* resolveToolSearchOverride(
             turnInput.runtimePolicy.cwd,
             launchArgSettings,
@@ -11115,6 +11122,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
           const closed = yield* Deferred.make<void, never>();
           const context: ClaudeLiveQueryContext = {
+            nativeHistoryUpdatedAt,
             queryPolicy,
             nativeThreadId,
             settingsCwd: turnInput.runtimePolicy.cwd,

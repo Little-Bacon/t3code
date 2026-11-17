@@ -2444,7 +2444,7 @@ describe("parseAgentSessionTranscript", () => {
     },
   );
 
-  it.each([199, 200, 201, 205])(
+  it.each([199, 200, 201, 205, 10001])(
     "counts only omitted conversation messages for a %s-message Claude transcript",
     (count) => {
       const thread = AgentSessionScanner.parseAgentSessionTranscript({
@@ -2479,8 +2479,8 @@ describe("parseAgentSessionTranscript", () => {
         lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
       });
 
-      expect(thread?.omittedMessageCount).toBe(Math.max(0, count - 200));
-      expect(thread?.messages).toHaveLength(Math.min(200, count));
+      expect(thread?.omittedMessageCount).toBe(Math.max(0, count - 10000));
+      expect(thread?.messages).toHaveLength(Math.min(10000, count));
       expect(thread?.messages[0]?.text).toBe("Message 0");
       expect(thread?.messages.at(-1)?.text).toBe(`Message ${count - 1}`);
     },

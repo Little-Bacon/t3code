@@ -32,14 +32,20 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as Schedule from "effect/Schedule";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- import IDs must remain stable across process restarts.
+import * as NodeCrypto from "node:crypto";
 
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import { isActiveRun } from "../orchestration-v2/ThreadManagementService.ts";
+import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as AgentSessionScanner from "./AgentSessionScanner.ts";
 import * as ProjectService from "./ProjectService.ts";
+import { missingClaudeMessages } from "./claudeHistorySync.ts";
 
 const IMPORT_EVENT_PREFIX = "agent-session-import:v2";
 const CLAUDE_SESSION_ID_PATTERN =
@@ -92,10 +98,12 @@ function dateTime(value: string): DateTime.Utc {
 function messageEvents(input: {
   readonly threadId: ThreadId;
   readonly index: number;
+  readonly ordinal?: number;
+  readonly syncKey?: string;
   readonly message: AgentSessionScanner.AgentSessionThreadMessage;
 }): ReadonlyArray<OrchestrationV2DomainEvent> {
-  const ordinal = input.index + 1;
-  const suffix = String(input.index).padStart(6, "0");
+  const ordinal = input.ordinal ?? input.index + 1;
+  const suffix = input.syncKey ?? String(input.index).padStart(6, "0");
   const messageId = MessageId.make(`${input.threadId}:${suffix}`);
   const turnItemId = TurnItemId.make(
     `${IMPORT_EVENT_PREFIX}:turn-item:${input.threadId}:${suffix}`,
@@ -175,10 +183,14 @@ const make = Effect.gen(function* () {
   const eventSink = yield* EventSink.EventSinkV2;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+  const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const ceiling = settingsService.managedPolicy?.limits?.maxRuntimeMode;
   const importRecentAgentThreads = Effect.fn("importRecentAgentThreadsV2")(function* (
-    input: AgentSessionImportInput,
+    input: AgentSessionImportInput & {
+      readonly claudeHistorySyncOnly?: boolean;
+      readonly forceClaudeHistoryRefresh?: boolean;
+    },
   ) {
     const project = yield* projects.getById(input.projectId).pipe(
       Effect.mapError((cause) => new AgentSessionScanError({ operation: "read-projects", cause })),
@@ -231,7 +243,12 @@ const make = Effect.gen(function* () {
       }
       return payload.value.importedTranscripts ?? [];
     });
-    const outcomes = scanner.recentThreads(project.workspaceRoot, completedSources);
+    const outcomes = scanner.recentThreads(
+      project.workspaceRoot,
+      input.forceClaudeHistoryRefresh
+        ? completedSources.filter((source) => source.provider !== "claudeAgent")
+        : completedSources,
+    );
     const importedThreadIds = new Set<ThreadId>();
     let importedCount = 0;
     let skippedCount = 0;
@@ -243,6 +260,7 @@ const make = Effect.gen(function* () {
           return;
         }
         const source = outcome.source;
+        if (input.claudeHistorySyncOnly && source.provider !== "claudeAgent") return;
         const threadId = ThreadId.make(
           `import:${source.providerInstanceId}:${source.providerSessionId}`,
         );
@@ -301,6 +319,105 @@ const make = Effect.gen(function* () {
             }
             if (existing.value.thread.historyOrigin !== "v1_import") {
               return yield* new AgentSessionThreadModifiedError({ threadId });
+            }
+            if (thread.source === "claudeAgent") {
+              return yield* threadCommands.withLock(
+                threadId,
+                Effect.gen(function* () {
+                  const current = yield* orchestrator.getThreadRecords(threadId, [
+                    "messages",
+                    "runs",
+                    "turnItems",
+                    "providerThreads",
+                  ]);
+                  if (current.thread.deletedAt !== null || current.runs.some(isActiveRun))
+                    return null;
+                  const missing = missingClaudeMessages(
+                    thread.messages,
+                    current.messages.map((message) => ({
+                      ...message,
+                      createdAt: DateTime.formatIso(message.createdAt),
+                    })),
+                    current.runs.map((run) => ({
+                      ...run,
+                      requestedAt: DateTime.formatIso(run.requestedAt),
+                      completedAt:
+                        run.completedAt === null ? null : DateTime.formatIso(run.completedAt),
+                    })),
+                  );
+                  if (missing.length > 0) {
+                    const nextOrdinal = current.turnItems.reduce(
+                      (next, item) =>
+                        item.runId === null ? Math.max(next, item.ordinal + 1) : next,
+                      1,
+                    );
+                    const events = missing.flatMap((message, index) =>
+                      messageEvents({
+                        threadId,
+                        index,
+                        ordinal: nextOrdinal + index,
+                        syncKey:
+                          "claude-sync:" +
+                          NodeCrypto.createHash("sha256")
+                            .update(JSON.stringify([message.role, message.createdAt, message.text]))
+                            .digest("hex"),
+                        message,
+                      }),
+                    );
+                    const at = yield* DateTime.now;
+                    const newest = missing.reduce(
+                      (latest, message) => Math.max(latest, Date.parse(message.createdAt)),
+                      0,
+                    );
+                    const lastT3Run = current.runs.reduce(
+                      (latest, run) =>
+                        run.completedAt === null
+                          ? latest
+                          : Math.max(latest, DateTime.toEpochMillis(run.completedAt)),
+                      0,
+                    );
+                    const nativeProvider = current.providerThreads.find(
+                      (provider) =>
+                        provider.driver === "claudeAgent" &&
+                        provider.nativeThreadRef?.nativeId === thread.providerSessionId,
+                    );
+                    if (nativeProvider && newest > lastT3Run) {
+                      events.push({
+                        id: EventId.make("claude-sync:head:" + NodeCrypto.randomUUID()),
+                        type: "provider-thread.updated",
+                        threadId,
+                        driver: ProviderDriverKind.make("claudeAgent"),
+                        providerInstanceId: nativeProvider.providerInstanceId,
+                        occurredAt: at,
+                        payload: {
+                          ...nativeProvider,
+                          nativeConversationHeadRef: null,
+                          nativeMetadata: {
+                            ...nativeProvider.nativeMetadata,
+                            updatedAt: DateTime.formatIso(DateTime.makeUnsafe(newest)),
+                          },
+                          updatedAt: at,
+                        },
+                      });
+                    }
+                    events.push({
+                      id: EventId.make("claude-sync:thread:" + NodeCrypto.randomUUID()),
+                      type: "thread.metadata-updated",
+                      threadId,
+                      occurredAt: at,
+                      payload: { ...current.thread, updatedAt: at },
+                    });
+                    yield* eventSink.write({ events });
+                    yield* Effect.logInfo("Claude external history synchronized", {
+                      threadId,
+                      addedMessageCount: missing.length,
+                    });
+                  }
+                  yield* persistRuntime;
+                  yield* runtimes.recordImportedTranscript({ threadId, source });
+                  return true;
+                }),
+              );
             }
             yield* persistRuntime;
             yield* runtimes.recordImportedTranscript({ threadId, source });
@@ -452,7 +569,25 @@ const make = Effect.gen(function* () {
     return { importedCount, skippedCount } satisfies AgentSessionImportResult;
   });
 
-  return { importRecentAgentThreads };
+  let firstSweep = true;
+  let sweepCount = 0;
+  const syncClaudeHistory = Effect.fn("AgentSessionImporter.syncClaudeHistory")(function* () {
+    if (sweepCount++ % 4 === 0) yield* scanner.scan;
+    const forceClaudeHistoryRefresh = firstSweep;
+    firstSweep = false;
+    for (const project of yield* projects.listShells()) {
+      yield* importRecentAgentThreads({
+        projectId: project.id,
+        claudeHistorySyncOnly: true,
+        forceClaudeHistoryRefresh,
+      }).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Claude history sync deferred", { projectId: project.id, cause }),
+        ),
+      );
+    }
+  });
+  return { importRecentAgentThreads, syncClaudeHistory };
 });
 
 type AgentSessionImporterShape = Effect.Success<typeof make>;
@@ -463,3 +598,15 @@ export class AgentSessionImporter extends Context.Service<
 >()("t3/project/AgentSessionImporter") {}
 
 export const layer = Layer.effect(AgentSessionImporter, make);
+
+export const layerWithClaudeHistorySync = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const importer = yield* AgentSessionImporter;
+    yield* importer.syncClaudeHistory().pipe(
+      Effect.catch((cause) => Effect.logWarning("Claude history sync failed", { cause })),
+      Effect.repeat(Schedule.spaced("20 seconds")),
+      Effect.delay("5 seconds"),
+      Effect.forkScoped,
+    );
+  }),
+).pipe(Layer.provideMerge(layer));

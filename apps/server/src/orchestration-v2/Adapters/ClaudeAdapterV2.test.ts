@@ -8348,6 +8348,67 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect("reloads a warm Claude query after external history changes", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({
+        freshQueueOnReopen: true,
+        close: Queue.shutdown,
+      });
+      let firstOptions: ReturnType<typeof harness.getOpenedOptions>;
+      for (const ordinal of [1, 2, 3]) {
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: {
+              ...harness.providerThread,
+              nativeConversationHeadRef: null,
+              nativeMetadata: {
+                ...harness.providerThread.nativeMetadata,
+                updatedAt: ordinal === 3 ? "2026-09-01T11:00:00.000Z" : null,
+              },
+            },
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-external-history-${ordinal}`),
+            providerTurnOrdinal: ordinal,
+            text: "Continue.",
+            attachments: [],
+          }),
+        );
+        const opened = harness.getOpenedOptions();
+        if (ordinal === 1) firstOptions = opened;
+        else if (ordinal === 2) assert.strictEqual(opened, firstOptions);
+        else {
+          assert.notStrictEqual(opened, firstOptions);
+          assert.equal(opened?.resume, WAKE_NATIVE_SESSION);
+          assert.equal(opened?.resumeSessionAt, undefined);
+        }
+        yield* harness.offerAndWait(
+          usageSnapshotFrame(
+            `msg_external_${ordinal}`,
+            `00000000-0000-4000-8000-00000000082${ordinal}`,
+            { ...zeroUsage, input_tokens: 100, output_tokens: 10 },
+          ),
+        );
+        yield* harness.offerAndWait(
+          makeResultFrame({
+            uuid: `00000000-0000-4000-8000-00000000083${ordinal}`,
+            result: "Done.",
+          }),
+        );
+        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+      }
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("reports the settings directory of a reused Claude query", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
