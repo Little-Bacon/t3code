@@ -12,16 +12,20 @@ import {
   type OrchestrationV2ProviderThread,
 } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as EventStore from "../orchestration-v2/EventStore.ts";
@@ -37,7 +41,9 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as AgentSessionImporter from "./AgentSessionImporter.ts";
 import * as AgentSessionScanner from "./AgentSessionScanner.ts";
+import * as ClaudeDesktopSessionBridge from "./ClaudeDesktopSessionBridge.ts";
 import * as ProjectService from "./ProjectService.ts";
+import * as ProcessRunner from "../processRunner.ts";
 
 const projectId = ProjectId.make("agent-session-import-project");
 const timestamp = "2026-09-01T10:00:00.000Z";
@@ -219,6 +225,9 @@ const makeImporter = Effect.fn(function* (
       Layer.provide(
         Layer.mergeAll(
           sinkLayer,
+          Layer.succeed(ClaudeDesktopSessionBridge.ClaudeDesktopSessionBridge, {
+            sync: Effect.void,
+          }),
           settings,
           ThreadCommandExecutor.layer,
           Layer.succeed(IdAllocator.IdAllocatorV2, yield* IdAllocator.IdAllocatorV2),
@@ -227,6 +236,11 @@ const makeImporter = Effect.fn(function* (
             yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository,
           ),
           Layer.mock(AgentSessionScanner.AgentSessionScanner)({
+            claudeInstancesForTranscript: (filePath) =>
+              Effect.succeed([
+                ProviderInstanceId.make(filePath.split("/")[2]!),
+                ...(filePath.includes("/claudeAgent/") ? [ProviderInstanceId.make("magpie")] : []),
+              ]),
             recentThreads: () => Stream.fromIterable(candidates),
             scan: Effect.succeed({ candidates: [], scannedAt: timestamp }),
           }),
@@ -431,6 +445,171 @@ it.effect("starts Claude history synchronization in the production layer", () =>
         (message) => message.text,
       ),
     ).toEqual(["Fix it", "Fixed"]);
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
+it.effect(
+  "syncs a shared-home Claude alias into its T3 owner and archives only empty import duplicates",
+  () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const source = candidate(
+        CLAUDE_MODEL_SELECTION,
+        "020e7f00-dce6-406b-8ec6-ed90498945d6",
+        "claudeAgent",
+      );
+      const importer = yield* makeImporter([source]);
+      yield* importer.run;
+      const alias = candidate(
+        { ...CLAUDE_MODEL_SELECTION, instanceId: ProviderInstanceId.make("magpie") },
+        source.source.providerSessionId,
+        "claudeAgent",
+      );
+      const ownerId = yield* seedOwner(alias);
+      yield* importer.run;
+      const owner = yield* projections.getThreadRecords(ownerId, ["messages", "providerThreads"]);
+      expect(owner.messages.map((message) => message.text)).toEqual(["Fix it", "Fixed"]);
+      expect(owner.thread.providerInstanceId).toBe("magpie");
+      const duplicate = yield* projections.getThreadRecords(importId(source), ["messages"]);
+      expect(duplicate.thread.archivedAt).not.toBeNull();
+      expect(duplicate.thread.deletedAt).toBeNull();
+      expect(duplicate.messages).toHaveLength(2);
+      const count = importer.published.length;
+      yield* importer.run;
+      expect(importer.published).toHaveLength(count);
+    }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
+it.effect(
+  "announces only unregistered idle T3 Claude sessions through the desktop resume link",
+  () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped();
+      const directory = `${root}/desktop`;
+      const home = `${root}/home`;
+      yield* fs.makeDirectory(directory, { recursive: true });
+      yield* sql`INSERT INTO projection_projects
+      (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+      VALUES (${projectId}, 'Project', '/workspace/project', '[]', ${timestamp}, ${timestamp})`;
+      const ids = [
+        "020e7f00-dce6-406b-8ec6-ed90498945d6",
+        "120e7f00-dce6-406b-8ec6-ed90498945d6",
+        "220e7f00-dce6-406b-8ec6-ed90498945d6",
+        "320e7f00-dce6-406b-8ec6-ed90498945d6",
+        "420e7f00-dce6-406b-8ec6-ed90498945d6",
+      ];
+      const transcriptDir = `${home}/.claude/projects/-workspace-project`;
+      yield* fs.makeDirectory(transcriptDir, { recursive: true });
+      for (const [index, id] of ids.entries()) {
+        const selection =
+          index === 4
+            ? { ...CLAUDE_MODEL_SELECTION, instanceId: ProviderInstanceId.make("other-home") }
+            : CLAUDE_MODEL_SELECTION;
+        const ownerId = yield* seedOwner(
+          candidate(selection, id, "claudeAgent"),
+          index === 2 ? "archived" : "active",
+        );
+        if (index === 3)
+          yield* sql`INSERT INTO orchestration_v2_projection_runs
+          (run_id, thread_id, ordinal, provider, provider_instance_id, status, requested_at, payload_json)
+          VALUES ('active-bridge-run', ${ownerId}, 1, 'claudeAgent', 'claudeAgent', 'running', ${timestamp}, '{}')`;
+        yield* fs.writeFileString(`${transcriptDir}/${id}.jsonl`, "");
+      }
+      yield* fs.writeFileString(
+        `${directory}/local_existing.json`,
+        JSON.stringify({ cliSessionId: ids[0] }),
+      );
+      const opened: Array<ReadonlyArray<string>> = [];
+      const build = ClaudeDesktopSessionBridge.make.pipe(
+        Effect.provideService(HostProcess.Environment, {
+          T3CODE_CLAUDE_DESKTOP_SESSIONS_DIR: directory,
+        }),
+        Effect.provideService(HostProcess.Platform, "darwin"),
+        Effect.provideService(HostProcess.HomeDirectory, home),
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.mock(AgentSessionScanner.AgentSessionScanner)({
+              claudeInstancesForTranscript: () =>
+                Effect.succeed([ProviderInstanceId.make("claudeAgent")]),
+            }),
+            Layer.mock(ProcessRunner.ProcessRunner)({
+              run: (input) =>
+                Effect.gen(function* () {
+                  opened.push(input.args);
+                  yield* fs
+                    .writeFileString(
+                      `${directory}/local_new.json`,
+                      JSON.stringify({ cliSessionId: ids[1] }),
+                    )
+                    .pipe(Effect.orDie);
+                  return {
+                    code: ChildProcessSpawner.ExitCode(0),
+                    stdout: "",
+                    stderr: "",
+                    timedOut: false,
+                    stdoutTruncated: false,
+                    stderrTruncated: false,
+                    stdoutInvalidUtf8: false,
+                    stderrInvalidUtf8: false,
+                  };
+                }),
+            }),
+          ),
+        ),
+      );
+      const bridge = yield* build;
+      yield* bridge.sync;
+      yield* bridge.sync;
+      expect(opened).toEqual([["-g", `claude://resume?session=${ids[1]}`]]);
+      yield* fs.writeFileString(
+        `${directory}/local_new.json`,
+        JSON.stringify({ cliSessionId: ids[1] }),
+      );
+      yield* (yield* build).sync;
+      expect(opened).toHaveLength(1);
+      const disabled = yield* ClaudeDesktopSessionBridge.make.pipe(
+        Effect.provideService(HostProcess.Environment, {}),
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.mock(AgentSessionScanner.AgentSessionScanner)({}),
+            Layer.mock(ProcessRunner.ProcessRunner)({}),
+          ),
+        ),
+      );
+      yield* disabled.sync;
+      expect(opened).toHaveLength(1);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(persistence, NodeServices.layer))),
+);
+
+it.effect("rechecks a shared-home Claude alias inside the import commit", () =>
+  Effect.gen(function* () {
+    const entering = yield* Deferred.make<void>();
+    const resume = yield* Deferred.make<void>();
+    const source = candidate(
+      CLAUDE_MODEL_SELECTION,
+      "020e7f00-dce6-406b-8ec6-ed90498945d6",
+      "claudeAgent",
+    );
+    const importer = yield* makeImporter(
+      [source],
+      Deferred.succeed(entering, undefined).pipe(Effect.andThen(Deferred.await(resume))),
+    );
+    const pending = yield* Effect.forkScoped(importer.run);
+    yield* Deferred.await(entering);
+    yield* seedOwner(
+      candidate(
+        { ...CLAUDE_MODEL_SELECTION, instanceId: ProviderInstanceId.make("magpie") },
+        source.source.providerSessionId,
+        "claudeAgent",
+      ),
+    );
+    yield* Deferred.succeed(resume, undefined);
+    expect(yield* Fiber.join(pending)).toEqual({ importedCount: 0, skippedCount: 0 });
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    expect(yield* Effect.option(projections.getThread(importId(source)))).toEqual(Option.none());
+    expect(importer.published).toEqual([]);
   }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 

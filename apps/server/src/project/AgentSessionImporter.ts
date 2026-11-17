@@ -12,6 +12,7 @@ import {
   EventId,
   MessageId,
   ProjectId,
+  ProviderInstanceId,
   ProviderDriverKind,
   ThreadId,
   TurnItemId,
@@ -33,6 +34,8 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Schedule from "effect/Schedule";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- import IDs must remain stable across process restarts.
 import * as NodeCrypto from "node:crypto";
 
@@ -46,6 +49,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as AgentSessionScanner from "./AgentSessionScanner.ts";
 import * as ProjectService from "./ProjectService.ts";
 import { missingClaudeMessages } from "./claudeHistorySync.ts";
+import * as ClaudeDesktopSessionBridge from "./ClaudeDesktopSessionBridge.ts";
 
 const IMPORT_EVENT_PREFIX = "agent-session-import:v2";
 const CLAUDE_SESSION_ID_PATTERN =
@@ -185,6 +189,7 @@ const make = Effect.gen(function* () {
   const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
   const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const settingsService = yield* ServerSettings.ServerSettingsService;
+  const sql = yield* SqlClient.SqlClient;
   const ceiling = settingsService.managedPolicy?.limits?.maxRuntimeMode;
   const importRecentAgentThreads = Effect.fn("importRecentAgentThreadsV2")(function* (
     input: AgentSessionImportInput & {
@@ -261,7 +266,7 @@ const make = Effect.gen(function* () {
         }
         const source = outcome.source;
         if (input.claudeHistorySyncOnly && source.provider !== "claudeAgent") return;
-        const threadId = ThreadId.make(
+        let threadId = ThreadId.make(
           `import:${source.providerInstanceId}:${source.providerSessionId}`,
         );
         if (outcome._tag === "AlreadyImported") {
@@ -278,6 +283,27 @@ const make = Effect.gen(function* () {
 
         const imported = yield* Effect.gen(function* () {
           const thread = outcome.thread;
+          const ownerInstances = [
+            ...new Set([
+              thread.providerInstanceId,
+              ...(thread.source === "claudeAgent"
+                ? yield* scanner.claudeInstancesForTranscript(source.filePath)
+                : []),
+            ]),
+          ];
+          const owners =
+            thread.source === "claudeAgent" && ownerInstances.length > 0
+              ? yield* sql<{ readonly thread_id: string; readonly provider_instance_id: string }>`
+                SELECT DISTINCT thread_id, provider_instance_id
+                FROM orchestration_v2_projection_provider_threads
+                WHERE driver = 'claudeAgent'
+                  AND provider_instance_id IN ${sql.in(ownerInstances)}
+                  AND json_extract(payload_json, '$.nativeThreadRef.nativeId') = ${thread.providerSessionId}
+                ORDER BY (thread_id LIKE 'import:%') ASC, thread_id ASC
+              `.pipe(NodeSqliteClient.readOnly)
+              : [];
+          const owner = owners[0];
+          if (owner) threadId = ThreadId.make(owner.thread_id);
           if (
             thread.source === "claudeAgent" &&
             !CLAUDE_SESSION_ID_PATTERN.test(thread.providerSessionId)
@@ -295,7 +321,9 @@ const make = Effect.gen(function* () {
             {
               threadId,
               providerName: driver,
-              providerInstanceId: thread.providerInstanceId,
+              providerInstanceId: owner
+                ? ProviderInstanceId.make(owner.provider_instance_id)
+                : thread.providerInstanceId,
               adapterKey: driver,
               runtimeMode,
               status: "stopped",
@@ -310,6 +338,12 @@ const make = Effect.gen(function* () {
           );
           const existing = yield* Effect.option(orchestrator.getThreadRecords(threadId, []));
           if (Option.isSome(existing)) {
+            if (
+              existing.value.thread.deletedAt !== null ||
+              (existing.value.thread.archivedAt !== null &&
+                existing.value.thread.historyOrigin !== "v1_import")
+            )
+              return null;
             if (existing.value.thread.projectId !== input.projectId) {
               return yield* new AgentSessionThreadProjectConflictError({
                 threadId,
@@ -317,7 +351,10 @@ const make = Effect.gen(function* () {
                 actualProjectId: existing.value.thread.projectId,
               });
             }
-            if (existing.value.thread.historyOrigin !== "v1_import") {
+            if (
+              existing.value.thread.historyOrigin !== "v1_import" &&
+              thread.source !== "claudeAgent"
+            ) {
               return yield* new AgentSessionThreadModifiedError({ threadId });
             }
             if (thread.source === "claudeAgent") {
@@ -405,7 +442,7 @@ const make = Effect.gen(function* () {
                       type: "thread.metadata-updated",
                       threadId,
                       occurredAt: at,
-                      payload: { ...current.thread, updatedAt: at },
+                      payload: { ...current.thread, historyOrigin: "v1_import", updatedAt: at },
                     });
                     yield* eventSink.write({ events });
                     yield* Effect.logInfo("Claude external history synchronized", {
@@ -415,6 +452,54 @@ const make = Effect.gen(function* () {
                   }
                   yield* persistRuntime;
                   yield* runtimes.recordImportedTranscript({ threadId, source });
+                  for (const duplicate of owners.slice(1)) {
+                    const duplicateId = ThreadId.make(duplicate.thread_id);
+                    if (!duplicateId.startsWith("import:")) continue;
+                    yield* threadCommands.withLock(
+                      duplicateId,
+                      Effect.gen(function* () {
+                        const snapshot = yield* orchestrator.getThreadRecords(duplicateId, [
+                          "runs",
+                          "messages",
+                        ]);
+                        if (
+                          snapshot.thread.projectId !== input.projectId ||
+                          snapshot.thread.deletedAt !== null ||
+                          snapshot.thread.archivedAt !== null ||
+                          snapshot.runs.length > 0
+                        )
+                          return;
+                        const uncovered = missingClaudeMessages(
+                          snapshot.messages.flatMap((message) =>
+                            message.role === "user" || message.role === "assistant"
+                              ? [
+                                  {
+                                    role: message.role,
+                                    text: message.text,
+                                    createdAt: DateTime.formatIso(message.createdAt),
+                                  },
+                                ]
+                              : [],
+                          ),
+                          thread.messages.map((message) => ({ ...message, runId: null })),
+                          [],
+                        );
+                        if (uncovered.length > 0) return;
+                        const at = yield* DateTime.now;
+                        yield* eventSink.write({
+                          events: [
+                            {
+                              id: EventId.make("claude-sync:duplicate:" + NodeCrypto.randomUUID()),
+                              type: "thread.metadata-updated",
+                              threadId: duplicateId,
+                              occurredAt: at,
+                              payload: { ...snapshot.thread, archivedAt: at, updatedAt: at },
+                            },
+                          ],
+                        });
+                      }),
+                    );
+                  }
                   return true;
                 }),
               );
@@ -493,6 +578,7 @@ const make = Effect.gen(function* () {
 
           const committed = yield* eventSink.write({
             unlessNativeThreadOwned: providerThread,
+            nativeThreadOwnerInstanceIds: ownerInstances,
             events: [
               {
                 id: EventId.make(`${IMPORT_EVENT_PREFIX}:thread:${threadId}:created`),
@@ -602,7 +688,9 @@ export const layer = Layer.effect(AgentSessionImporter, make);
 export const layerWithClaudeHistorySync = Layer.effectDiscard(
   Effect.gen(function* () {
     const importer = yield* AgentSessionImporter;
+    const desktop = yield* ClaudeDesktopSessionBridge.ClaudeDesktopSessionBridge;
     yield* importer.syncClaudeHistory().pipe(
+      Effect.andThen(desktop.sync),
       Effect.catch((cause) => Effect.logWarning("Claude history sync failed", { cause })),
       Effect.repeat(Schedule.spaced("20 seconds")),
       Effect.delay("5 seconds"),

@@ -2105,6 +2105,43 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect("resolves Claude aliases by their physical transcript home", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const otherHome = yield* makeTempDir("t3code-claude-other-");
+        const scanner = yield* AgentSessionScanner.AgentSessionScanner.pipe(
+          Effect.provide(
+            layerScannerTest({
+              claudeHomePath,
+              codexHomePath,
+              providerInstances: {
+                [ProviderInstanceId.make("magpie")]: {
+                  driver: ProviderDriverKind.make("claudeAgent"),
+                  config: { homePath: claudeHomePath },
+                },
+                [ProviderInstanceId.make("claude-other")]: {
+                  driver: ProviderDriverKind.make("claudeAgent"),
+                  config: { homePath: otherHome },
+                },
+              },
+            }),
+          ),
+        );
+        expect(
+          yield* scanner.claudeInstancesForTranscript(
+            path.join(claudeHomePath, "projects", "workspace", "session.jsonl"),
+          ),
+        ).toEqual(["claudeAgent", "magpie"]);
+        expect(
+          yield* scanner.claudeInstancesForTranscript(
+            path.join(otherHome, "projects", "workspace", "session.jsonl"),
+          ),
+        ).toEqual(["claude-other"]);
+      }),
+    );
+
     it.effect("uses configured order when custom instances share a session home", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;

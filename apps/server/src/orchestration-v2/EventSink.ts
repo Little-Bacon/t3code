@@ -5,6 +5,7 @@ import {
   type OrchestrationV2ProviderThread,
   OrchestrationV2StoredEvent,
   ProviderThreadId,
+  type ProviderInstanceId,
   RunAttemptId,
   RunId,
   RuntimeRequestId,
@@ -101,6 +102,7 @@ export interface EventSinkV2Shape {
       OrchestrationV2ProviderThread,
       "driver" | "providerInstanceId" | "appThreadId" | "nativeThreadRef"
     >;
+    readonly nativeThreadOwnerInstanceIds?: ReadonlyArray<ProviderInstanceId>;
     readonly guardPendingUserInputCancellations?: boolean;
     readonly commandId?: CommandId;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
@@ -115,6 +117,7 @@ export interface EventSinkV2Shape {
       OrchestrationV2ProviderThread,
       "driver" | "providerInstanceId" | "appThreadId" | "nativeThreadRef"
     >;
+    readonly nativeThreadOwnerInstanceIds?: ReadonlyArray<ProviderInstanceId>;
     readonly guardPendingUserInputCancellations?: boolean;
     readonly commandId?: CommandId;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
@@ -455,7 +458,7 @@ const layerBase: Layer.Layer<
               SELECT provider_thread_id
               FROM orchestration_v2_projection_provider_threads
               WHERE driver = ${imported.driver}
-                AND provider_instance_id = ${imported.providerInstanceId}
+                AND provider_instance_id IN ${sql.in(input.nativeThreadOwnerInstanceIds ?? [imported.providerInstanceId])}
                 AND thread_id IS NOT ${imported.appThreadId}
                 AND json_extract(payload_json, '$.nativeThreadRef.nativeId') = ${imported.nativeThreadRef.nativeId}
               LIMIT 1

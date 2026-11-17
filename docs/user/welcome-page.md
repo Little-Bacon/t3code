@@ -106,11 +106,22 @@ Each import attempt reads up to 100 conversation files and 4 GiB per project. To
 continue a large batch, open the Welcome page again and pick the project in
 **Review all**. You can continue without the remaining history.
 
-Imported Claude Code conversations pick up new messages from the native client
+Claude Code conversations pick up new messages from the native client
 about every 20 seconds while T3 Code is running. Finish the current turn before
 continuing the conversation in another client. An active T3 turn delays the
 refresh until it finishes; the next Claude turn loads the updated native context.
 Tool activity and attachments are still omitted. Other providers are imported once.
+
+On macOS, you can also add conversations started in T3 to Claude Desktop's Code
+list automatically. Set `T3CODE_CLAUDE_DESKTOP_SESSIONS_DIR` in the T3 server's
+environment to your active desktop profile's `claude-code-sessions/<account>/<org>`
+directory, then restart T3. API and third-party-provider desktop profiles use their
+own directory, often under `~/Library/Application Support/Claude-3p`.
+After the first turn finishes, T3 asks Claude Desktop to import the native session
+through its resume link. Claude may open or switch conversations during import.
+The transcript stays in place; titles, groups, archives and deletions remain
+independent. Leave the variable unset to disable desktop imports. Profiles that
+use a different Claude config directory are excluded.
 
 You can start without importing. While an import runs, T3 Code stays on the
 Welcome page. If you quit, open the Welcome page again from **Settings → About**; the

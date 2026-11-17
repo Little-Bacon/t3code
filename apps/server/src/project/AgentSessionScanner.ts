@@ -219,6 +219,9 @@ export class AgentSessionScanner extends Context.Service<
   AgentSessionScanner,
   {
     readonly scan: Effect.Effect<AgentSessionScanResult, AgentSessionScanError>;
+    readonly claudeInstancesForTranscript: (
+      filePath: string,
+    ) => Effect.Effect<ReadonlyArray<ProviderInstanceId>, AgentSessionScanError>;
     readonly recentThreads: (
       workspaceRoot: string,
       completedSources?: ReadonlyArray<AgentSessionImportSource>,
@@ -1945,7 +1948,39 @@ export const make = Effect.gen(function* () {
     completedSources = [],
   ) => Stream.unwrap(prepareRecentThreads(workspaceRoot, completedSources));
 
-  return AgentSessionScanner.of({ scan, recentThreads });
+  const claudeInstancesForTranscript = Effect.fn(
+    "AgentSessionScanner.claudeInstancesForTranscript",
+  )(
+    function* (filePath: string) {
+      const settings = yield* serverSettings.getSettings;
+      const transcriptHome = yield* directoryIdentity(
+        path.dirname(path.dirname(path.dirname(filePath))),
+      );
+      const instances: Record<string, ProviderInstanceConfig> = {
+        claudeAgent: { driver: ProviderDriverKind.make("claudeAgent") },
+        ...settings.providerInstances,
+      };
+      const matches: Array<ProviderInstanceId> = [];
+      for (const [id, instance] of Object.entries(instances)) {
+        if (instance.driver !== "claudeAgent") continue;
+        const config = decodeClaudeSettings(instance.config ?? {});
+        if (Option.isNone(config)) continue;
+        const environmentHome = instance.environment?.findLast(
+          (variable) => variable.name === "CLAUDE_CONFIG_DIR",
+        )?.value;
+        const home = resolveClaudeConfigDir(
+          config.value.homePath,
+          typeof environmentHome === "string" ? environmentHome : hostEnvironment.CLAUDE_CONFIG_DIR,
+        );
+        if ((yield* directoryIdentity(home)) === transcriptHome)
+          matches.push(ProviderInstanceId.make(id));
+      }
+      return matches;
+    },
+    Effect.mapError((cause) => new AgentSessionScanError({ operation: "read-settings", cause })),
+  );
+
+  return AgentSessionScanner.of({ scan, recentThreads, claudeInstancesForTranscript });
 });
 
 export const layer = Layer.effect(AgentSessionScanner, make).pipe(
