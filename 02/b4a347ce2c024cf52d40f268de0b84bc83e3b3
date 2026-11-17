@@ -1,0 +1,19 @@
+docs/user/welcome-page.md
+  s_21889ac26eec80::t_e090d5bba4c1c0 126-130
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "02b4a347ce2c024cf52d40f268de0b84bc83e3b3",
+  "prompts": {},
+  "sessions": {
+    "s_21889ac26eec80": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1e3ec-e9ce-7a93-9c11-07dfc02414ac",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Yani Hu <56077583+Little-Bacon@users.noreply.github.com>"
+    }
+  }
+}
